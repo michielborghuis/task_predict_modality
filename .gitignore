@@ -11,3 +11,7 @@ trace-*
 __pycache__/
 *.pyc
 *.pyo
+# Local benchmark outputs and generated builds
+/outputs/
+/null/
+/target_*/
