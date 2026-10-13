@@ -47,15 +47,13 @@ with open(par["input_model"], "rb") as f:
     bundle = pickle.load(f)
 
 test_modality = adata_test_mod1.uns.get("modality")
-if test_modality != "ATAC":
-    raise ValueError(
-        f"babel_predict only supports ATAC->GEX prediction (test input must be ATAC), "
-        f"got modality={test_modality!r}. The GEX->ATAC direction of this BABEL port "
-        "collapses to a per-peak base-rate prediction that ignores the RNA input "
-        "(confirmed via cross-cell prediction similarity ~0.6 and near-zero separation "
-        "between accessible/inaccessible peaks, even after training to convergence) "
-        "and is intentionally disabled rather than silently returning uninformative output."
-    )
+expected_modality = bundle.get("source_modality", "ATAC")
+if test_modality != expected_modality:
+    raise ValueError(f"Expected {expected_modality!r}, got {test_modality!r}")
+if list(adata_train_mod2.var_names) != bundle["rna_var_names"]:
+    raise ValueError("RNA output feature order differs from trained model")
+if test_modality == "H3K4me3" and "counts" not in adata_test_mod1.layers:
+    raise ValueError("T-ChIC prediction requires a raw counts layer")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = AssymSplicedAutoEncoder(bundle["n_genes"], bundle["chrom_counts"], hidden_dim=bundle["hidden_dim"])
@@ -79,7 +77,7 @@ X_bin = (counts > 0).astype(np.float32)
 per_chrom = [X_bin[:, idxs].tocsr() for idxs in chrom_groups.values()]
 
 n_cells = X_bin.shape[0]
-chunk_size = 4096
+chunk_size = 256
 pred_chunks = []
 with torch.no_grad():
     for start in range(0, n_cells, chunk_size):
@@ -102,6 +100,8 @@ adata_out = ad.AnnData(
     uns={
         "dataset_id": adata_test_mod1.uns.get("dataset_id", ""),
         "method_id": "babel",
+        "adaptation": bundle.get("adaptation", "none"),
+        "source_modality": expected_modality,
     },
 )
 

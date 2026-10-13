@@ -138,23 +138,15 @@ adata_mod2_train = ad.read_h5ad(par["input_train_mod2"])
 modality1 = adata_mod1_train.uns.get("modality")
 modality2 = adata_mod2_train.uns.get("modality")
 
-if {modality1, modality2} != {"GEX", "ATAC"}:
-    exit_non_applicable(
-        f"babel only supports GEX<->ATAC translation, got modalities "
-        f"({modality1!r}, {modality2!r}). This is a direct port of BABEL "
-        "(Wu et al. 2021), whose architecture is not adapted for other modality pairs."
-    )
-
-if modality1 != "ATAC":
-    exit_non_applicable(
-        f"babel only supports ATAC->GEX prediction (input_train_mod1 must be ATAC, "
-        f"input_train_mod2 must be GEX), got mod1={modality1!r}, mod2={modality2!r}. "
-        "The GEX->ATAC direction of this BABEL port collapses to a per-peak base-rate "
-        "prediction that ignores the RNA input (confirmed via cross-cell prediction "
-        "similarity ~0.6 and near-zero accessible/inaccessible separation, even after "
-        "training to convergence) and is intentionally disabled rather than silently "
-        "producing uninformative output."
-    )
+if modality1 not in {"ATAC", "H3K4me3"} or modality2 != "GEX":
+    exit_non_applicable(f"Unsupported source/target: {modality1!r}, {modality2!r}")
+if not adata_mod1_train.obs_names.equals(adata_mod2_train.obs_names):
+    raise ValueError("Paired training cell order differs between modalities")
+if modality1 == "H3K4me3":
+    for data in (adata_mod1_train, adata_mod2_train):
+        if "counts" not in data.layers:
+            raise ValueError("T-ChIC adaptation requires raw counts layers")
+    logger.info("T-ChIC adaptation: binary gene-level H3K4me3, chromosome grouping")
 
 adata_atac, adata_rna = adata_mod1_train, adata_mod2_train
 direction = "mod1_is_atac"
@@ -163,7 +155,16 @@ logger.info("Preprocessing RNA and ATAC...")
 X_rna, Y_rna_counts, size_factors = _rna_matrix(adata_rna)
 X_atac_bin = _atac_binarized(adata_atac)
 
-chrom_counts, chrom_groups = parse_chrom_groups(adata_atac.var_names)
+if modality1 == "H3K4me3":
+    chrom = adata_atac.var["Chromosome"]
+    if chrom.isna().any() or chrom.astype(str).str.strip().eq("").any():
+        raise ValueError("Missing chromosome annotation")
+    labels = chrom.astype(str).str.strip().to_numpy()
+    chrom_groups = {c: np.flatnonzero(labels == c) for c in sorted(set(labels))}
+    chrom_counts = [len(indices) for indices in chrom_groups.values()]
+else:
+    chrom_counts, chrom_groups = parse_chrom_groups(adata_atac.var_names)
+chrom_order = np.concatenate(list(chrom_groups.values()))
 # Slice peaks per chromosome on a CSC view (fast column indexing); each group stays
 # sparse and is densified per-cell later.
 X_atac_bin_csc = X_atac_bin.tocsc()
@@ -172,9 +173,45 @@ X_atac_per_chrom = [X_atac_bin_csc[:, idxs] for idxs in chrom_groups.values()]
 n_genes = X_rna.shape[1]
 n_peaks = X_atac_bin.shape[1]
 
-dataset = PairedDataset(X_rna, X_atac_per_chrom, Y_rna_counts, X_atac_bin, size_factors)
+dataset = PairedDataset(X_rna, X_atac_per_chrom, Y_rna_counts, X_atac_bin[:, chrom_order], size_factors)
 
 logger.info("Building model (n_genes=%d, n_peaks=%d, %d chromosome groups)...", n_genes, n_peaks, len(chrom_counts))
+
+# Internal early-stopping split uses training data only.
+internal_validation_samples = []
+internal_split = skorch.dataset.ValidSplit(0.1)
+
+if modality1 == "H3K4me3":
+    metadata = adata_atac.obs[["sample", "day"]].copy()
+    if metadata.isna().any().any():
+        raise ValueError("Missing sample/day metadata")
+    metadata = metadata.astype(str)
+    if (metadata.groupby("sample")["day"].nunique() != 1).any():
+        raise ValueError("A plate contains multiple developmental days")
+
+    plates = metadata.drop_duplicates().sort_values(["day", "sample"])
+    rng = np.random.default_rng(42)
+    for day, group in plates.groupby("day", sort=True):
+        if len(group) < 2:
+            raise ValueError(f"Insufficient training plates for day {day}")
+        internal_validation_samples.append(
+            str(rng.choice(group["sample"].to_numpy()))
+        )
+
+    is_valid = metadata["sample"].isin(internal_validation_samples).to_numpy()
+    fit_indices = np.flatnonzero(~is_valid)
+    valid_indices = np.flatnonzero(is_valid)
+
+    def internal_split(dataset, y=None, **kwargs):
+        return (
+            torch.utils.data.Subset(dataset, fit_indices),
+            torch.utils.data.Subset(dataset, valid_indices),
+        )
+
+    logger.info(
+        "Internal plate split: %d fitting cells / %d validation cells; held-out plates=%s",
+        len(fit_indices), len(valid_indices), internal_validation_samples,
+    )
 
 net = BabelNet(
     module=BabelModule,
@@ -192,9 +229,9 @@ net = BabelNet(
     iterator_train__collate_fn=_collate,
     iterator_train__shuffle=True,
     iterator_valid__collate_fn=_collate,
-    train_split=skorch.dataset.ValidSplit(0.1),
+    train_split=internal_split,
     callbacks=[
-        skorch.callbacks.EarlyStopping(patience=par["early_stopping_patience"]),
+        skorch.callbacks.EarlyStopping(patience=par["early_stopping_patience"], load_best=True),
         skorch.callbacks.LRScheduler(
             policy=torch.optim.lr_scheduler.ReduceLROnPlateau,
             monitor="valid_loss",
@@ -212,6 +249,9 @@ net.fit(dataset, y=None)
 
 logger.info("Saving model bundle...")
 bundle = {
+    "source_modality": modality1,
+    "internal_validation_samples": internal_validation_samples,
+    "adaptation": "tchic_genelevel_binary_v1" if modality1 == "H3K4me3" else "none",
     "state_dict": net.module_.autoencoder.state_dict(),
     "n_genes": n_genes,
     "n_peaks": n_peaks,
