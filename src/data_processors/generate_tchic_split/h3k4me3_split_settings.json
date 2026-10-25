@@ -1,0 +1,40 @@
+{
+  "mark": "H3K4me3",
+  "partition_names": ["train", "validation", "test"],
+  "target_proportions": [0.70, 0.15, 0.15],
+  "target_plate_counts": [42, 9, 9],
+  "seed": 42,
+  "n_iterations": 150000,
+  "reference_environment": {
+    "python_executable": "/home/michiel/miniforge3/envs/thesis/bin/python",
+    "anndata": "0.11.4",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3"
+  },
+  "day_order": [0, 3, 4, 5, 6, 7],
+  "expected_plates_per_day": {
+    "0": 6,
+    "3": 6,
+    "4": 12,
+    "5": 12,
+    "6": 12,
+    "7": 12
+  },
+  "fixed_allocations_by_plate_count": {
+    "6": [4, 1, 1]
+  },
+  "special_allocation": {
+    "plate_count": 12,
+    "days_per_candidate": 2,
+    "default": [8, 2, 2],
+    "choices": [[9, 1, 2], [9, 2, 1]]
+  },
+  "required_coverage_columns": ["rep", "seqrun"],
+  "score_weights": {
+    "within_day_cell_rmse": 1.0,
+    "overall_cell_rmse": 1.0,
+    "day_rep_rmse": 0.25,
+    "rep_rmse": 0.10,
+    "seqrun_rmse": 0.10
+  }
+}
