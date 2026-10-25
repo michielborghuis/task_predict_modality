@@ -1,0 +1,50 @@
+name: prepare_tchic_input
+namespace: data_processors
+summary: Extract aligned T-ChIC development modalities and attach verified metadata.
+description: >
+  Select H3K4me3 retained cells from filtered metadata, extract raw ChIC and
+  unspliced counts by explicit cell/feature IDs, join cell annotations and
+  apply the fixed plate split. Final-test cells are excluded.
+arguments:
+  - name: --input_raw
+    type: file
+    required: true
+    direction: input
+  - name: --input_filtered
+    type: file
+    required: true
+    direction: input
+  - name: --input_annotations
+    type: file
+    required: true
+    direction: input
+  - name: --input_split
+    type: file
+    required: true
+    direction: input
+  - name: --mark
+    type: string
+    default: H3K4me3
+  - name: --annotation_sample_prefix
+    type: string
+    default: PZ-MB-TChIC-
+  - name: --output_mod1
+    type: file
+    required: true
+    direction: output
+  - name: --output_mod2
+    type: file
+    required: true
+    direction: output
+resources:
+  - type: python_script
+    path: script.py
+engines:
+  - type: docker
+    image: openproblems/base_python:1
+  - type: native
+runners:
+  - type: executable
+  - type: nextflow
+    directives:
+      label: [midtime, highmem, midcpu]
