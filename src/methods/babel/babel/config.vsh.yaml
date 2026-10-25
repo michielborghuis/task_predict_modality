@@ -24,6 +24,11 @@ links:
   repository: https://github.com/wukevin/babel
 info:
   preferred_normalization: log_cp10k
+arguments:
+  - name: "--seed"
+    type: integer
+    default: 42
+    description: Random seed passed to BABEL training.
 resources:
   - path: main.nf
     type: nextflow_script

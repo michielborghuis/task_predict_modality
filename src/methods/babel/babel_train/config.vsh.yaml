@@ -47,6 +47,10 @@ arguments:
     type: integer
     default: 20
     description: Epochs without validation loss improvement before stopping early.
+  - name: "--seed"
+    type: integer
+    default: 42
+    description: Seed Python, NumPy, PyTorch and the training data-loader generator.
 engines:
   - type: docker
     image: openproblems/base_pytorch_nvidia:1
