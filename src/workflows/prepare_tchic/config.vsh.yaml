@@ -1,0 +1,70 @@
+name: prepare_tchic
+namespace: workflows
+summary: Prepare the H3K4me3 to GEX T-ChIC development benchmark.
+description: >
+  Extract aligned raw counts using the fixed plate split, run the pinned
+  OpenProblems log_cp component independently for both modalities, and create
+  task files with process_dataset. Validation cells occupy test slots; the
+  final holdout is excluded.
+arguments:
+  - name: --input_raw
+    type: file
+    required: true
+    direction: input
+  - name: --input_filtered
+    type: file
+    required: true
+    direction: input
+  - name: --input_annotations
+    type: file
+    required: true
+    direction: input
+  - name: --input_split
+    type: file
+    required: true
+    direction: input
+  - name: --output_train_mod1
+    type: file
+    required: true
+    direction: output
+    description: Filename published under --publish_dir.
+  - name: --output_train_mod2
+    type: file
+    required: true
+    direction: output
+    description: Filename published under --publish_dir.
+  - name: --output_test_mod1
+    type: file
+    required: true
+    direction: output
+    description: Filename published under --publish_dir.
+  - name: --output_test_mod2
+    type: file
+    required: true
+    direction: output
+    description: Filename published under --publish_dir.
+  - name: --mark
+    type: string
+    default: H3K4me3
+  - name: --annotation_sample_prefix
+    type: string
+    default: PZ-MB-TChIC-
+  - name: --max_test_cells
+    type: integer
+    default: -1
+    description: "-1 keeps all validation cells in the benchmark test slots."
+  - name: --seed
+    type: integer
+    default: 1
+resources:
+  - type: nextflow_script
+    path: main.nf
+    entrypoint: run_wf
+  - path: /common/nextflow_helpers/helper.nf
+dependencies:
+  - name: data_processors/prepare_tchic_input
+  - name: normalization/log_cp
+    repository: tchic_datasets_106edbde
+  - name: data_processors/process_dataset
+runners:
+  - type: nextflow
