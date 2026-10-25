@@ -1,5 +1,6 @@
 import logging
 import pickle
+import random
 import sys
 
 import anndata as ad
@@ -26,6 +27,7 @@ par = {
     "batch_size": 64,
     "loss2_weight": 3.0,
     "early_stopping_patience": 20,
+    "seed": 42,
 }
 meta = {"name": "babel", "resources_dir": "src/methods/babel"}
 ## VIASH END
@@ -36,6 +38,13 @@ from chrom_utils import parse_chrom_groups
 from exit_codes import exit_non_applicable
 from model import AssymSplicedAutoEncoder
 from losses import QuadLoss
+
+random.seed(par["seed"])
+np.random.seed(par["seed"])
+torch.manual_seed(par["seed"])
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(par["seed"])
+logger.info("Set Python, NumPy, and PyTorch random seeds to %d", par["seed"])
 
 
 def _as_csr(X):
@@ -190,7 +199,7 @@ if modality1 == "H3K4me3":
         raise ValueError("A plate contains multiple developmental days")
 
     plates = metadata.drop_duplicates().sort_values(["day", "sample"])
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(par["seed"])
     for day, group in plates.groupby("day", sort=True):
         if len(group) < 2:
             raise ValueError(f"Insufficient training plates for day {day}")
@@ -228,7 +237,9 @@ net = BabelNet(
     batch_size=par["batch_size"],
     iterator_train__collate_fn=_collate,
     iterator_train__shuffle=True,
+    iterator_train__generator=torch.Generator().manual_seed(par["seed"]),
     iterator_valid__collate_fn=_collate,
+    iterator_valid__generator=torch.Generator().manual_seed(par["seed"]),
     train_split=internal_split,
     callbacks=[
         skorch.callbacks.EarlyStopping(patience=par["early_stopping_patience"], load_best=True),
