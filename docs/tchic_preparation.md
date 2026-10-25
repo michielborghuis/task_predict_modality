@@ -5,7 +5,7 @@
 The synthetic preparation passed on 2026-10-23. The full, non-stub Nextflow
 workflow completed all six processes with zero failures and published four
 H5AD files. Their content was checked against the synthetic input fixture.
-No real T-ChIC count matrices were processed.
+Real-data preparation subsequently passed on 2026-10-23; see the real-data section below.
 
 The workflow uses the fixed plate split. It sends retained validation cells to
 the task `test_mod1` and `test_mod2` files and excludes the final `test`
@@ -22,7 +22,7 @@ partition. It does not search for or regenerate a split.
   normalization ID `log_cp10k`. Each modality gets its own `size_factors`.
 - The existing `process_dataset` component creates the four task files,
   preserves sparse `counts` and normalized layers and the requested `obs` and
-  `var` metadata, and applies its default cap of 1,000 test cells. The
+  `var` metadata, and supports a default cap of 1,000 test cells. The verified real-data run explicitly used `max_test_cells=-1` to retain all validation cells. The
   development workflow's test slots contain validation cells, not final-test
   cells. HVG columns are preserved only when supplied; this workflow does not
   compute or insert them.
@@ -137,11 +137,24 @@ exactly. Both modalities have their own normalized values and size factors.
 
 ## Real-data status and future invocation
 
-Real-data preparation has **not** been run. The paths below are placeholders;
-confirm the real input files, split manifest, annotation keys, and output
-directory before using them. In particular, verify Python `anndata` is
-available to reticulate in the selected processor image and that the real
-files have the expected count layers and metadata.
+Real-data preparation completed successfully on 2026-10-23 in
+`outputs/tchic/runs/real_20261023_124600/`: six processes succeeded and none
+failed. The outputs contain 12,251 training cells and 2,632 validation cells,
+with 24,877 features. All 2,615 final-test cells were excluded.
+
+Full content validation confirmed counts, normalization, cell and feature
+order, annotations, sparse layers, and absent HVG columns. Maximum absolute
+normalization error was below 4.8e-7. All four task schemas passed.
+
+Evidence is stored under that run directory:
+- `launch.sh`: exact executed command and runtime settings
+- `exit_status.json`: successful exit status
+- `verification/final_execution_summary.json`: execution summary
+- `verification/content_validation_final.json`: full content checks
+- `verification/schema_validation.json`: task schema checks
+
+The example below remains a template with placeholder input paths. For the
+exact successful invocation, consult the recorded `launch.sh`.
 
 From the repository root, with the image paths from the verified runtime lock:
 
@@ -172,6 +185,6 @@ nextflow run target_tchic_verified_20261023/nextflow/workflows/prepare_tchic \
 The workflow direction is fixed: mod1 is H3K4me3 and mod2 is GEX. The declared
 argument names are `--output_train_mod1`, `--output_train_mod2`,
 `--output_test_mod1`, and `--output_test_mod2`; there is no `--output_dir` or
-`--swap` argument. The publish directory must be new. These settings and
-examples document the intended invocation only; they are not evidence of a
-real-data run.
+`--swap` argument. The publish directory must be new. The template above documents the invocation structure; the recorded
+run and validation reports provide evidence of the successful real-data run.
+This run performed preparation only; it did not train models or calculate metrics.
