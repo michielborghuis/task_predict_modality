@@ -43,12 +43,34 @@ argument_groups:
         type: "integer"
         description: "The seed for determining the train/test split."
         default: 1
+      - name: "--max_test_cells"
+        type: "integer"
+        description: "Maximum test cells; -1 keeps every test cell."
+        default: 1000
+      - name: "--preserve_obs_columns"
+        type: "string"
+        description: "Comma-separated input obs columns to retain (batch,size_factors by default)."
+        default: "batch,size_factors"
+      - name: "--preserve_var_columns"
+        type: "string"
+        description: "Comma-separated input var columns to retain (gene_ids and optional HVG fields by default)."
+        default: "gene_ids,hvg,hvg_score"
 resources:
   - type: r_script
     path: script.R
 engines:
   - type: docker
     image: openproblems/base_r:1
+    setup:
+      - type: docker
+        run: |
+          python3 -m venv --without-pip /opt/tchic-python
+          python3 -m pip --python /opt/tchic-python/bin/python install --no-cache-dir pip==24.0 anndata==0.11.4 numpy==2.2.6 scipy==1.15.3 pandas==2.3.3 h5py==3.16.0
+          /opt/tchic-python/bin/python -c 'import anndata, numpy'
+info:
+  tchic_runtime:
+    base_sif_sha256: d9406ebde369d5b6e4dff7441ec9ba4866d2c99a8a5d9d35b0699cb6f4fb04da
+    reticulate_python: /opt/tchic-python/bin/python
 runners:
   - type: executable
   - type: nextflow

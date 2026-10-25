@@ -1,4 +1,8 @@
 cat("Loading dependencies\n")
+if (file.exists("/opt/tchic-python/bin/python")) {
+  Sys.setenv(RETICULATE_PYTHON = "/opt/tchic-python/bin/python",
+             RETICULATE_USE_MANAGED_VENV = "no")
+}
 library(anndata, warn.conflicts = FALSE)
 library(Matrix, warn.conflicts = FALSE)
 
@@ -11,7 +15,10 @@ par <- list(
   output_test_mod1 = "resources_test/task_predict_modality/openproblems_neurips2021/bmmc_cite/test_mod1.h5ad",
   output_test_mod2 = "resources_test/task_predict_modality/openproblems_neurips2021/bmmc_cite/test_mod2.h5ad",
   swap = TRUE,
-  seed = 1L
+  seed = 1L,
+  max_test_cells = 1000L,
+  preserve_obs_columns = "batch,size_factors",
+  preserve_var_columns = "gene_ids,hvg,hvg_score"
 )
 # par <- list(
 #   input_mod1 = "resources_test/task_predict_modality/openproblems_neurips2021/bmmc_multiome/output_mod1.h5ad",
@@ -31,6 +38,34 @@ set.seed(par$seed)
 cat("Reading input data\n")
 ad1 <- anndata::read_h5ad(if (!par$swap) par$input_mod1 else par$input_mod2)
 ad2 <- anndata::read_h5ad(if (!par$swap) par$input_mod2 else par$input_mod1)
+
+cell_ids <- function(ad, label) {
+  ids <- rownames(ad$obs)
+  if (is.null(ids) || length(ids) != nrow(ad$obs)) {
+    stop(label, " observation IDs could not be read")
+  }
+  ids <- as.character(ids)
+  if (anyNA(ids) || anyDuplicated(ids)) {
+    stop(label, " observation IDs must be non-missing and unique")
+  }
+  ids
+}
+ad1_cell_ids <- cell_ids(ad1, "input_mod1")
+ad2_cell_ids <- cell_ids(ad2, "input_mod2")
+if (!identical(ad1_cell_ids, ad2_cell_ids)) {
+  stop("Input modalities must have exactly aligned cell IDs in the same order")
+}
+if (!all(c("counts", "normalized") %in% names(ad1$layers)) ||
+    !all(c("counts", "normalized") %in% names(ad2$layers))) {
+  stop("Both input modalities must contain counts and normalized layers")
+}
+if (("is_train" %in% colnames(ad1$obs)) != ("is_train" %in% colnames(ad2$obs))) {
+  stop("is_train must be present in both modalities or neither")
+}
+if ("is_train" %in% colnames(ad1$obs) &&
+    !identical(as.character(ad1$obs[["is_train"]]), as.character(ad2$obs[["is_train"]]))) {
+  stop("is_train labels must be aligned between modalities")
+}
 
 # input checks -- used to balance the subsample of test cells further down
 if (!"cell_type" %in% colnames(ad1$obs)) {
@@ -76,9 +111,27 @@ ad1_uns$dataset_name <- ad2_uns$dataset_name <- new_dataset_name
 # determine new obsm
 ad1_obsm <- ad2_obsm <- list()
 
-# determine new var
-ad1_var <- ad1$var[, intersect(colnames(ad1$var), c("gene_ids", "hvg", "hvg_score")), drop = FALSE]
-ad2_var <- ad2$var[, intersect(colnames(ad2$var), c("gene_ids", "hvg", "hvg_score")), drop = FALSE]
+# determine new var and obs metadata
+parse_columns <- function(x) {
+  values <- trimws(strsplit(x, ",", fixed = TRUE)[[1]])
+  unique(values[nzchar(values)])
+}
+preserve_var_columns <- parse_columns(par$preserve_var_columns)
+preserve_obs_columns <- parse_columns(par$preserve_obs_columns)
+optional_var_columns <- c("gene_ids", "hvg", "hvg_score")
+missing_var_columns <- setdiff(setdiff(preserve_var_columns, optional_var_columns), colnames(ad1$var))
+missing_var_columns2 <- setdiff(setdiff(preserve_var_columns, optional_var_columns), colnames(ad2$var))
+if (length(missing_var_columns) || length(missing_var_columns2)) {
+  stop("Requested preserve_var_columns are missing: ", paste(unique(c(missing_var_columns, missing_var_columns2)), collapse = ", "))
+}
+optional_obs_columns <- c("size_factors")
+missing_obs_columns <- setdiff(setdiff(preserve_obs_columns, optional_obs_columns), colnames(ad1$obs))
+missing_obs_columns2 <- setdiff(setdiff(preserve_obs_columns, optional_obs_columns), colnames(ad2$obs))
+if (length(missing_obs_columns) || length(missing_obs_columns2)) {
+  stop("Requested preserve_obs_columns are missing: ", paste(unique(c(missing_obs_columns, missing_obs_columns2)), collapse = ", "))
+}
+ad1_var <- ad1$var[, intersect(preserve_var_columns, colnames(ad1$var)), drop = FALSE]
+ad2_var <- ad2$var[, intersect(preserve_var_columns, colnames(ad2$var)), drop = FALSE]
 
 if (ad1_mod == "ATAC" && "gene_activity" %in% names(ad1$obsm)) {
   # copy gene activity in new object
@@ -124,16 +177,23 @@ if ("is_train" %in% colnames(ad1$obs)) {
 }
 cat("Train cells: ", length(is_train), ", test cells: ", length(is_test), "\n", sep = "")
 
-# sample cells
-if (length(is_test) > 1000) {
+max_test_cells <- as.integer(par$max_test_cells)
+if (is.na(max_test_cells) || max_test_cells == 0L || max_test_cells < -1L) {
+  stop("max_test_cells must be -1 (unlimited) or a positive integer")
+}
+if (max_test_cells > 0L && length(is_test) > max_test_cells) {
   ct <- as.character(ad1$obs[["cell_type"]][is_test])
   ct_tab <- table(ct)
   ct_freq <- setNames(as.vector(ct_tab) / sum(ct_tab), names(ct_tab))
-  is_test <- sample(is_test, 1000, prob = sqrt(1 / ct_freq[ct]))
+  is_test <- sample(is_test, max_test_cells, prob = sqrt(1 / ct_freq[ct]))
 }
 
-train_obs <- ad1$obs[is_train, intersect(colnames(ad1$obs), c("batch", "size_factors")), drop = FALSE]
-test_obs <- ad1$obs[is_test, intersect(colnames(ad1$obs), c("batch", "size_factors")), drop = FALSE]
+obs_columns1 <- intersect(preserve_obs_columns, colnames(ad1$obs))
+obs_columns2 <- intersect(preserve_obs_columns, colnames(ad2$obs))
+train_obs1 <- ad1$obs[is_train, obs_columns1, drop = FALSE]
+test_obs1 <- ad1$obs[is_test, obs_columns1, drop = FALSE]
+train_obs2 <- ad2$obs[is_train, obs_columns2, drop = FALSE]
+test_obs2 <- ad2$obs[is_test, obs_columns2, drop = FALSE]
 subset_mats <- function(li, obs_filt) {
   out <- list()
   for (n in names(li)) {
@@ -142,34 +202,51 @@ subset_mats <- function(li, obs_filt) {
   out
 }
 
+# Keep layers as Python matrices: reticulate's conversion of integer CSR
+# counts to an R dgRMatrix can fail because its x slot requires doubles.
+# Slice without densifying or changing count dtype, then pass them directly
+# to the existing AnnData constructor. R indices are converted to zero-based.
+subset_layers <- function(ad, obs_filt) {
+  layers <- ad$layers$.get_py_object()
+  selection <- reticulate::tuple(
+    reticulate::r_to_py(as.list(as.integer(obs_filt - 1L))),
+    reticulate::py_eval("slice(None)", convert = FALSE)
+  )
+  out <- list()
+  for (name in c("counts", "normalized")) {
+    out[[name]] <- reticulate::py_get_item(layers$get(name), selection)
+  }
+  out
+}
+
 cat("Create train objects\n")
 output_train_mod1 <- anndata::AnnData(
-  layers = subset_mats(list(counts = ad1$layers[["counts"]], normalized = ad1$layers[["normalized"]]), is_train),
+  layers = subset_layers(ad1, is_train),
   obsm = subset_mats(ad1_obsm, is_train),
-  obs = train_obs,
+  obs = train_obs1,
   var = ad1_var,
   uns = ad1_uns
 )
 output_train_mod2 <- anndata::AnnData(
-  layers = subset_mats(list(counts = ad2$layers[["counts"]], normalized = ad2$layers[["normalized"]]), is_train),
+  layers = subset_layers(ad2, is_train),
   obsm = subset_mats(ad2_obsm, is_train),
-  obs = train_obs,
+  obs = train_obs2,
   var = ad2_var,
   uns = ad2_uns
 )
 
 cat("Create test objects\n")
 output_test_mod1 <- anndata::AnnData(
-  layers = subset_mats(list(counts = ad1$layers[["counts"]], normalized = ad1$layers[["normalized"]]), is_test),
+  layers = subset_layers(ad1, is_test),
   obsm = subset_mats(ad1_obsm, is_test),
-  obs = test_obs,
+  obs = test_obs1,
   var = ad1_var,
   uns = ad1_uns
 )
 output_test_mod2 <- anndata::AnnData(
-  layers = subset_mats(list(counts = ad2$layers[["counts"]], normalized = ad2$layers[["normalized"]]), is_test),
+  layers = subset_layers(ad2, is_test),
   obsm = subset_mats(ad2_obsm, is_test),
-  obs = test_obs,
+  obs = test_obs2,
   var = ad2_var,
   uns = ad2_uns
 )
