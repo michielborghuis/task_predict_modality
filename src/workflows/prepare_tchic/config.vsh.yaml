@@ -46,9 +46,6 @@ arguments:
   - name: --mark
     type: string
     default: H3K4me3
-  - name: --annotation_sample_prefix
-    type: string
-    default: PZ-MB-TChIC-
   - name: --max_test_cells
     type: integer
     default: -1

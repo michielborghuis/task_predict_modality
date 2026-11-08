@@ -14,11 +14,13 @@ par = {
     "input_annotations": "annotations.h5ad",
     "input_split": "split.csv",
     "mark": "H3K4me3",
-    "annotation_sample_prefix": "PZ-MB-TChIC-",
     "output_mod1": "raw_mod1.h5ad",
     "output_mod2": "raw_mod2.h5ad",
 }
 ## VIASH END
+
+# Fixed prefix used by the supported annotation source.
+ANNOTATION_SAMPLE_PREFIX = "PZ-MB-TChIC-"
 
 ANNOTATION_COLUMNS = ["celltype", "celltype_general", "lineage"]
 RAW_LAYERS = {"H3K4me3": ("chic_counts", "H3K4me3"), "GEX": ("unspliced", "GEX")}
@@ -224,7 +226,7 @@ def build_inputs(params):
 
     annotation = _annotation_rows(
         params["input_annotations"],
-        params["annotation_sample_prefix"],
+        ANNOTATION_SAMPLE_PREFIX,
         mark,
         selected_samples,
         selected_barcodes,

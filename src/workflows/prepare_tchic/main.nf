@@ -17,7 +17,6 @@ workflow run_wf {
           input_annotations: state.input_annotations,
           input_split: state.input_split,
           mark: state.mark,
-          annotation_sample_prefix: state.annotation_sample_prefix,
           output_mod1: "tchic_raw_mod1.h5ad",
           output_mod2: "tchic_raw_mod2.h5ad"
         ]
