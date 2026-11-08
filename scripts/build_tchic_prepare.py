@@ -14,7 +14,7 @@ import subprocess
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TARGET = "target_tchic_verified_20261023"
+DEFAULT_TARGET = "target_tchic_prepare"
 PIN = "106edbdeae9775d71bdfb4e2dcca67e187dc843b"
 PYTHON_SHA = "c7a010cf9a282565c9401e74de3438ab33587d770bc52112b4981b6091fdd6fb"
 
