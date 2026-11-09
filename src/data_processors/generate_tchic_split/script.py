@@ -14,8 +14,8 @@ import pandas as pd
 par = {
     "input_metadata": "resources_test/tchic_split/metadata.h5ad",
     "input_settings": "src/data_processors/generate_tchic_split/h3k4me3_split_settings.json",
-    "output_manifest": "outputs/tchic/splits/generated_h3k4me3_plate_split.csv",
-    "output_provenance": "outputs/tchic/splits/generated_h3k4me3_plate_split.provenance.json",
+    "output_split": "outputs/tchic/splits/h3k4me3_plate_split.csv",
+    "output_split_info": "outputs/tchic/splits/h3k4me3_plate_split_info.json",
 }
 ## VIASH END
 
@@ -452,14 +452,6 @@ def metadata_fingerprint(obs):
     return sha256_text(canonical)
 
 
-def file_sha256(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def read_h5ad_obs_metadata(input_metadata):
     required_columns = ["sample", *PLATE_METADATA_COLUMNS]
     with h5py.File(input_metadata, "r") as source:
@@ -534,8 +526,8 @@ def generate_from_h5ad(input_metadata, settings):
 
 def main():
     output_paths = [
-        Path(par["output_manifest"]),
-        Path(par["output_provenance"]),
+        Path(par["output_split"]),
+        Path(par["output_split_info"]),
     ]
     existing = [str(path) for path in output_paths if path.exists()]
     if existing:
@@ -577,13 +569,13 @@ def main():
             "anndata": anndata.__version__,
         },
     }
-    atomic_write_text(par["output_manifest"], manifest_csv)
+    atomic_write_text(par["output_split"], manifest_csv)
     atomic_write_text(
-        par["output_provenance"],
+        par["output_split_info"],
         json.dumps(provenance, indent=2, sort_keys=True) + "\n",
     )
-    print(f"Wrote split manifest: {par['output_manifest']}")
-    print(f"Wrote split provenance: {par['output_provenance']}")
+    print(f"Wrote plate split: {par['output_split']}")
+    print(f"Wrote split information: {par['output_split_info']}")
     print(f"Valid candidates: {valid_candidates}")
     print(f"Best total score: {scores['total_score']:.10f}")
 

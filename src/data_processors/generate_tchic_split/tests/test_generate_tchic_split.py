@@ -197,8 +197,8 @@ class SplitGeneratorTests(unittest.TestCase):
             split.par = {
                 "input_metadata": str(metadata_path),
                 "input_settings": str(settings_path),
-                "output_manifest": str(manifest_path),
-                "output_provenance": str(provenance_path),
+                "output_split": str(manifest_path),
+                "output_split_info": str(provenance_path),
             }
             try:
                 with mock.patch.object(

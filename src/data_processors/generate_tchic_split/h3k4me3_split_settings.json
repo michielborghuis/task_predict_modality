@@ -5,12 +5,6 @@
   "target_plate_counts": [42, 9, 9],
   "seed": 42,
   "n_iterations": 150000,
-  "reference_environment": {
-    "python_executable": "/home/michiel/miniforge3/envs/thesis/bin/python",
-    "anndata": "0.11.4",
-    "numpy": "2.2.6",
-    "pandas": "2.3.3"
-  },
   "day_order": [0, 3, 4, 5, 6, 7],
   "expected_plates_per_day": {
     "0": 6,

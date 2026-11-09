@@ -3,7 +3,7 @@ namespace: data_processors
 summary: Generate a reproducible T-ChIC plate-level data split.
 description: >
   Generate a reproducible T-ChIC plate-level train/validation/test split from
-  cell metadata only. The manifest label test denotes the final holdout.
+  cell metadata only. The split label test denotes the final holdout.
 arguments:
   - name: --input_metadata
     type: file
@@ -15,12 +15,12 @@ arguments:
     description: Explicit JSON settings for the split search.
     required: true
     direction: input
-  - name: --output_manifest
+  - name: --output_split
     type: file
     description: Per-plate CSV assignment.
     required: true
     direction: output
-  - name: --output_provenance
+  - name: --output_split_info
     type: file
     description: JSON settings, metadata fingerprint, versions, and scores.
     required: true
@@ -29,11 +29,6 @@ resources:
   - type: python_script
     path: script.py
 engines:
-  - type: docker
-    image: openproblems/base_python:1
   - type: native
 runners:
   - type: executable
-test_resources:
-  - type: python_script
-    path: tests/check_viash_config.py
