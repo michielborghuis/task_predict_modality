@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import anndata as ad
@@ -27,8 +26,7 @@ RAW_LAYERS = {"H3K4me3": ("chic_counts", "H3K4me3"), "GEX": ("unspliced", "GEX")
 
 
 def _metadata(path):
-    # Backed AnnData still eagerly reads layers. Read only the two dataframe
-    # groups, preserving categorical dtypes, index names and row order.
+    # Read cell and gene metadata without loading the count matrices.
     with h5py.File(path, "r") as source:
         obs = ad.io.read_elem(source["obs"])
         var = ad.io.read_elem(source["var"])
@@ -41,81 +39,17 @@ def _metadata(path):
     return obs_names, var_names, obs, var
 
 
-def _subset_csr(group, row_indices, col_indices, shape):
-    n_rows, n_cols = shape
-    col_map = np.full(n_cols, -1, dtype=np.int64)
-    col_map[np.asarray(col_indices, dtype=np.int64)] = np.arange(len(col_indices))
-    indptr = group["indptr"][:]
-    out_indices = []
-    out_data = []
-    out_indptr = [0]
-    for source_row in row_indices:
-        start, stop = int(indptr[source_row]), int(indptr[source_row + 1])
-        if start != stop:
-            source_cols = group["indices"][start:stop]
-            values = group["data"][start:stop]
-            mapped_cols = col_map[source_cols]
-            keep = mapped_cols >= 0
-            if np.any(keep):
-                out_indices.append(mapped_cols[keep].astype(np.int32, copy=False))
-                out_data.append(values[keep])
-                out_indptr.append(out_indptr[-1] + int(keep.sum()))
-            else:
-                out_indptr.append(out_indptr[-1])
-        else:
-            out_indptr.append(out_indptr[-1])
-    indices = np.concatenate(out_indices) if out_indices else np.empty(0, dtype=np.int32)
-    values = np.concatenate(out_data) if out_data else np.empty(0, dtype=np.float64)
-    return sp.csr_matrix(
-        (values, indices, np.asarray(out_indptr, dtype=np.int64)),
-        shape=(len(row_indices), len(col_indices)),
-    )
-
-
-def _subset_csc(group, row_indices, col_indices, shape):
-    n_rows, n_cols = shape
-    row_map = np.full(n_rows, -1, dtype=np.int64)
-    row_map[np.asarray(row_indices, dtype=np.int64)] = np.arange(len(row_indices))
-    indptr = group["indptr"][:]
-    out_rows = []
-    out_cols = []
-    out_data = []
-    for out_col, source_col in enumerate(col_indices):
-        start, stop = int(indptr[source_col]), int(indptr[source_col + 1])
-        if start == stop:
-            continue
-        source_rows = group["indices"][start:stop]
-        values = group["data"][start:stop]
-        mapped_rows = row_map[source_rows]
-        keep = mapped_rows >= 0
-        if np.any(keep):
-            mapped_rows = mapped_rows[keep]
-            kept_values = values[keep]
-            out_rows.extend(mapped_rows.tolist())
-            out_cols.extend([out_col] * len(mapped_rows))
-            out_data.extend(kept_values.tolist())
-    return sp.coo_matrix(
-        (np.asarray(out_data), (np.asarray(out_rows), np.asarray(out_cols))),
-        shape=(len(row_indices), len(col_indices)),
-    ).tocsr()
-
-
 def _read_count_subset(handle, layer, row_indices, col_indices):
     obj = handle["layers"][layer]
     if isinstance(obj, h5py.Dataset):
         values = np.vstack([obj[int(row), :][col_indices] for row in row_indices])
         matrix = sp.csr_matrix(values)
     else:
-        shape = tuple(int(v) for v in obj.attrs["shape"])
-        encoding = obj.attrs.get("encoding-type", "")
-        if isinstance(encoding, bytes):
-            encoding = encoding.decode("utf-8")
-        if encoding == "csr_matrix":
-            matrix = _subset_csr(obj, row_indices, col_indices, shape)
-        elif encoding == "csc_matrix":
-            matrix = _subset_csc(obj, row_indices, col_indices, shape)
+        stored = ad.io.sparse_dataset(obj)
+        if stored.format == "csr":
+            matrix = stored[row_indices, :][:, col_indices].tocsr()
         else:
-            raise ValueError(f"Unsupported sparse encoding for layer {layer}: {encoding}")
+            matrix = stored[:, col_indices][row_indices, :].tocsr()
     values = matrix.data
     if values.size and (not np.isfinite(values).all() or np.any(values < 0)):
         raise ValueError(f"Layer {layer} contains negative or non-finite counts")
@@ -170,8 +104,6 @@ def build_inputs(params):
     mark = params["mark"]
     if mark != "H3K4me3":
         raise ValueError("This workflow currently supports only mark H3K4me3")
-    if mark not in RAW_LAYERS:
-        raise ValueError(f"Unsupported histone mark: {mark}")
 
     filtered_cells, filtered_genes, filtered_obs, filtered_var = _metadata(params["input_filtered"])
     raw_cells, raw_genes, _, _ = _metadata(params["input_raw"])
@@ -180,25 +112,25 @@ def build_inputs(params):
 
     split = pd.read_csv(params["input_split"], dtype={"sample": str, "mark": str, "split": str})
     if not {"sample", "mark", "split"}.issubset(split.columns):
-        raise ValueError("Split manifest must contain sample, mark, and split columns")
+        raise ValueError("Split CSV must contain sample, mark, and split columns")
     split = split.loc[split["mark"] == mark, ["sample", "mark", "split"]].copy()
     if split.empty:
-        raise ValueError(f"Split manifest has no assignments for {mark}")
+        raise ValueError(f"Split CSV has no assignments for {mark}")
     if split.duplicated(["sample", "mark"]).any():
-        raise ValueError("Split manifest contains duplicate sample/mark assignments")
+        raise ValueError("Split CSV contains duplicate sample/mark assignments")
     if not set(split["split"]).issubset({"train", "validation", "test"}):
-        raise ValueError("Split manifest labels must be train, validation, or test")
+        raise ValueError("Split CSV labels must be train, validation, or test")
 
     filtered_obs = filtered_obs.copy()
     filtered_obs["sample"] = filtered_obs["sample"].astype(str)
     filtered_obs["mark"] = filtered_obs["mark"].astype(str)
     selected_mask = filtered_obs["mark"].eq(mark)
     selected_samples = set(filtered_obs.loc[selected_mask, "sample"])
-    manifest_samples = set(split["sample"])
-    if selected_samples != manifest_samples:
-        missing = sorted(selected_samples - manifest_samples)
-        extra = sorted(manifest_samples - selected_samples)
-        raise ValueError(f"Split/sample mismatch; missing assignments={missing[:5]}, unused manifest samples={extra[:5]}")
+    split_samples = set(split["sample"])
+    if selected_samples != split_samples:
+        missing = sorted(selected_samples - split_samples)
+        extra = sorted(split_samples - selected_samples)
+        raise ValueError(f"Split/sample mismatch; missing assignments={missing[:5]}, unused split samples={extra[:5]}")
 
     assignment = dict(zip(split["sample"], split["split"]))
     labels = filtered_obs.loc[selected_mask, "sample"].map(assignment)
